@@ -1,0 +1,18 @@
+<h2>新增題目</h2>
+
+<input id="chapter" placeholder="章節">
+<input id="question" placeholder="題目">
+<input id="options" placeholder="選項 (逗號分隔)">
+<input id="answer" placeholder="答案 index">
+
+<button onclick="addQuestion()">新增</button>
+
+<hr>
+
+<h3>PDF 匯入</h3>
+<input type="file" id="pdfFile">
+<button onclick="uploadPDF()">匯入 PDF</button>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="js/firebase.js"></script>
+<script src="js/admin.js"></script>
