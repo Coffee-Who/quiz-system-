@@ -1,0 +1,23 @@
+body {
+  font-family: Arial;
+  background: #fff;
+  margin: 0;
+}
+
+.container {
+  max-width: 600px;
+  margin: auto;
+  padding: 20px;
+}
+
+.option {
+  border: 1px solid #ccc;
+  padding: 12px;
+  margin-top: 10px;
+  cursor: pointer;
+}
+
+.option.selected {
+  background: #111;
+  color: #fff;
+}
