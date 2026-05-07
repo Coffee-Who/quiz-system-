@@ -70,11 +70,10 @@ class PDFQuizParser:
     
     @staticmethod
     def parse_questions(text: str) -> List[Dict]:
-        """解析題目 - 使用分塊法避免行分割問題"""
+        """解析題目 - 題號只有括號，沒有數字"""
         
-        # 使用正則找出所有題號位置（比行分割更可靠）
-        # 匹配：（ ） 或 ( ) 後面跟數字和句號
-        question_pattern = r'[（(]\s*[）)]\s*(\d+)\.\s*'
+        # 匹配：（ ） 或 ( ) 開頭（題號沒有數字！）
+        question_pattern = r'[（(]\s*[）)]\s+'
         
         matches = list(re.finditer(question_pattern, text))
         
@@ -83,10 +82,9 @@ class PDFQuizParser:
         
         questions = []
         
-        # 從每個題號開始，到下一個題號結束，提取該題的所有內容
+        # 從每個題號開始，到下一個題號結束
         for idx, match in enumerate(matches):
-            q_num = int(match.group(1))
-            q_start = match.end()  # 題號後的位置
+            q_start = match.end()  # 括號後的位置
             
             # 找下一個題號的位置（或文末）
             if idx + 1 < len(matches):
@@ -95,13 +93,14 @@ class PDFQuizParser:
                 q_end = len(text)
             
             # 提取該題的完整文本
-            q_block = text[q_start:q_end]
+            q_block = text[q_start:q_end].strip()
             
             # 分離題文和選項
             q_text, options = PDFQuizParser._split_question_and_options(q_block)
             
             # 創建題目
             if len(options) >= 2:
+                q_num = idx + 1  # 題號由順序決定
                 question = {
                     "id": q_num,
                     "type": "single",
