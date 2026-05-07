@@ -54,223 +54,125 @@ if 'exam_state' not in st.session_state:
 
 class PDFQuizParser:
     """PDF 考卷解析"""
-    
+
+    # 支援半角 (A) 和全角 （A） 括號
+    OPTION_RE = re.compile(r'[（(]([A-D])[）)]')
+
+    # 題號格式（按優先順序）：
+    #  格式1: （ ）1.  / ( )1.   ← 作答空格在前
+    #  格式2: 1.  / 1、  ← 行首數字
+    #  格式3: 第1題
+    Q_NUM_PATTERNS = [
+        re.compile(r'[（(]\s*[）)]\s*(\d+)\s*[.、．]'),   # ( )1.
+        re.compile(r'(?:^|\s)(\d+)\s*[.、．]\s'),          # 1.
+        re.compile(r'第\s*(\d+)\s*[題题]'),                # 第1題
+    ]
+
     @staticmethod
     def extract_text(pdf_file) -> str:
         """提取 PDF 文本"""
         try:
             with pdfplumber.open(pdf_file) as pdf:
-                text = ""
+                pages_text = []
                 for page in pdf.pages:
-                    text += page.extract_text() + "\n"
-            return text
+                    t = page.extract_text()
+                    if t:
+                        pages_text.append(t)
+            return "\n".join(pages_text)
         except Exception as e:
             st.error(f"❌ PDF 讀取失敗: {e}")
             return ""
-    
+
     @staticmethod
     def parse_questions(text: str) -> List[Dict]:
-        """解析題目 - 添加詳細調試日誌"""
-        
-        import streamlit as st
-        
-        questions = []
-        
-        # 調試：記錄過程
-        debug_log = []
-        
-        debug_log.append(f"📄 總文本長度：{len(text)} 字符")
-        
+        """多策略解析題目，自動選最佳結果"""
+        debug_log = [f"📄 總文本長度：{len(text)} 字符"]
         lines = text.split('\n')
         debug_log.append(f"📋 總行數：{len(lines)} 行")
-        
-        # 第一步：找出所有包含選項的行
-        option_lines = []
-        for i, line in enumerate(lines):
-            if re.search(r'\([A-D]\)', line):
-                option_lines.append(i)
-        
-        debug_log.append(f"✅ 找到 {len(option_lines)} 行包含選項 (A)-(D)")
-        
-        if len(option_lines) > 0:
-            debug_log.append(f"   前 3 個選項行：")
-            for i, line_idx in enumerate(option_lines[:3]):
-                debug_log.append(f"   - 行 {line_idx}: {lines[line_idx][:80]}")
-        
-        # 第二步：從選項向上找題號
-        questions_found = {}
-        
-        for opt_line_idx in option_lines:
-            # 向上搜尋題號（最多搜尋 10 行）
-            q_num = None
-            q_text = ""
-            
-            for j in range(opt_line_idx, max(opt_line_idx - 10, -1), -1):
-                line = lines[j]
-                match = re.search(r'[（(]\s*[）)]\s*(\d+)\.', line)
-                if match:
-                    q_num = int(match.group(1))
-                    # 題文是題號後面的內容
-                    q_match = re.search(r'[（(]\s*[）)]\s*\d+\.\s+(.+)', line)
-                    if q_match:
-                        q_text = q_match.group(1)
-                    break
-            
-            if q_num:
-                if q_num not in questions_found:
-                    questions_found[q_num] = {"text": q_text, "options": [], "lines": set()}
-                
-                questions_found[q_num]["lines"].add(opt_line_idx)
-        
-        debug_log.append(f"🔍 找到 {len(questions_found)} 個題號：{sorted(questions_found.keys())}")
-        
-        # 第三步：收集每個題的選項
-        for q_num in sorted(questions_found.keys()):
-            q_info = questions_found[q_num]
-            q_text = q_info["text"]
-            all_options = []
-            
-            # 收集該題的所有選項行
-            for opt_line_idx in sorted(q_info["lines"]):
-                opt_line = lines[opt_line_idx]
-                opts = PDFQuizParser._extract_all_options(opt_line)
-                all_options.extend(opts)
-            
-            debug_log.append(f"   題 {q_num}：找到 {len(all_options)} 個選項")
-            
-            # 如果有選項，創建題目
-            if len(all_options) >= 2:
-                # 題文也可能在選項前面的幾行
-                if not q_text:
-                    for j in range(min(q_info["lines"]) - 1, max(min(q_info["lines"]) - 5, -1), -1):
-                        if j >= 0:
-                            line = lines[j].strip()
-                            if line and not re.search(r'\([A-D]\)', line):
-                                q_text = line + q_text
-                
-                question = {
-                    "id": q_num,
-                    "type": "single",
-                    "text": q_text.strip(),
-                    "options": all_options[:4],
-                    "correct": -1,
-                    "analysis": f"第 {q_num} 題"
-                }
-                questions.append(question)
-                debug_log.append(f"   ✅ 題 {q_num} 已創建")
-            else:
-                debug_log.append(f"   ❌ 題 {q_num} 只有 {len(all_options)} 個選項，不夠")
-        
-        debug_log.append(f"\n✨ 最終：成功解析 {len(questions)} 個題目")
-        
-        # 存儲調試信息
+
+        # 偵測文件使用的括號類型
+        half_opts = len(re.findall(r'\([A-D]\)', text))
+        full_opts = len(re.findall(r'[（）][A-D][（）]|（[A-D]）', text))
+        debug_log.append(f"🔍 選項括號：半角 {half_opts} 個，全角 {full_opts} 個")
+
+        # 嘗試每種題號模式，取結果最多的
+        best_questions = []
+        for i, pattern in enumerate(PDFQuizParser.Q_NUM_PATTERNS):
+            qs = PDFQuizParser._parse_with_pattern(text, lines, pattern)
+            debug_log.append(f"   策略 {i+1}：找到 {len(qs)} 題")
+            if len(qs) > len(best_questions):
+                best_questions = qs
+
+        debug_log.append(f"\n✨ 最終：成功解析 {len(best_questions)} 個題目")
         st.session_state.pdf_parse_debug = "\n".join(debug_log)
-        
-        return questions
-    
+        return best_questions
+
     @staticmethod
-    def _parse_questions_regex(text: str) -> List[Dict]:
-        """備用方法：用正則表達式解析"""
-        
-        questions = []
-        
-        # 找所有題號位置
-        pattern = r'[（(]\s*[）)]\s*(\d+)\.\s+'
-        matches = list(re.finditer(pattern, text))
-        
+    def _parse_with_pattern(text: str, lines: List[str], q_pattern: re.Pattern) -> List[Dict]:
+        """使用指定題號格式解析整份文本"""
+        matches = list(q_pattern.finditer(text))
         if not matches:
             return []
-        
-        # 從每個題號到下一個題號，提取完整文本塊
+
+        questions = []
         for idx, match in enumerate(matches):
             q_num = int(match.group(1))
             block_start = match.end()
-            
-            # 找下一個題號的位置（或文末）
-            if idx + 1 < len(matches):
-                block_end = matches[idx + 1].start()
-            else:
-                block_end = len(text)
-            
-            # 提取該題的完整文本塊
+            block_end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
             q_block = text[block_start:block_end]
-            
-            # 分離題文和選項
+
             q_text, options = PDFQuizParser._split_q_and_opts(q_block)
-            
-            # 創建題目
+
+            # 題文為空時，從題號同一行取後半段
+            if not q_text:
+                line_end = text.find('\n', match.start())
+                if line_end == -1:
+                    line_end = len(text)
+                tail = text[match.end():line_end].strip()
+                if tail and not PDFQuizParser.OPTION_RE.search(tail):
+                    q_text = tail
+
             if len(options) >= 2:
-                question = {
+                questions.append({
                     "id": q_num,
                     "type": "single",
                     "text": q_text.strip(),
                     "options": options[:4],
                     "correct": -1,
                     "analysis": f"第 {q_num} 題"
-                }
-                questions.append(question)
-        
+                })
+
         return questions
-    
+
     @staticmethod
     def _split_q_and_opts(block: str) -> tuple:
-        """將題目文本塊分割為題文和選項"""
-        
-        # 找第一個選項的位置
-        first_opt_match = re.search(r'\([A-D]\)', block)
-        
-        if not first_opt_match:
-            # 沒有選項
-            return block, []
-        
-        # 題文 = 第一個選項之前的部分
-        q_text = block[:first_opt_match.start()].strip()
-        
-        # 選項區塊 = 第一個選項開始到末尾
-        opts_block = block[first_opt_match.start():]
-        
-        # 提取所有選項
-        options = PDFQuizParser._extract_all_options(opts_block)
-        
+        """將題目文本塊分割為題文和選項（支援全角/半角）"""
+        first_opt = PDFQuizParser.OPTION_RE.search(block)
+        if not first_opt:
+            return block.strip(), []
+
+        q_text = block[:first_opt.start()].strip()
+        options = PDFQuizParser._extract_all_options(block[first_opt.start():])
         return q_text, options
 
-    
     @staticmethod
     def _extract_all_options(block: str) -> List[str]:
-        """從選項區塊提取所有 A B C D 選項 - 半角括號"""
-        options = []
-        
-        # 找所有選項的位置（只有半角）
-        positions = []
-        for match in re.finditer(r'\(([A-D])\)', block):
-            positions.append({
-                'letter': match.group(1),
-                'start': match.end(),
-                'pos': match.start()
-            })
-        
+        """提取選項，同時支援半角 (A) 和全角 （A）"""
+        positions = [
+            {'letter': m.group(1), 'pos': m.start(), 'start': m.end()}
+            for m in PDFQuizParser.OPTION_RE.finditer(block)
+        ]
         if not positions:
             return []
-        
-        # 根據位置提取內容
-        for i, pos_info in enumerate(positions):
-            letter = pos_info['letter']
-            text_start = pos_info['start']
-            
-            # 到下一個選項開始前結束
-            if i + 1 < len(positions):
-                text_end = positions[i + 1]['pos']
-            else:
-                text_end = len(block)
-            
-            content = block[text_start:text_end].strip()
-            
-            # 移除末尾標點符號
-            content = re.sub(r'[。，、；：\.\,;:\s]+$', '', content)
-            
+
+        options = []
+        for i, p in enumerate(positions):
+            text_end = positions[i + 1]['pos'] if i + 1 < len(positions) else len(block)
+            content = block[p['start']:text_end].strip()
+            content = re.sub(r'[。，、；：.,:;\s]+$', '', content)
             if content:
-                options.append(f"({letter}) {content}")
-        
+                options.append(f"({p['letter']}) {content}")
+
         return options
 
 
@@ -359,26 +261,30 @@ def page_quiz_manage():
                 
                 st.divider()
                 st.subheader("🔍 題號偵測結果")
-                
+
                 question_patterns = [
-                    (r'[（(]\s*[）)]\s+', "括號題號（無數字）"),
-                    (r'[（(]\s*[）)]\s*\d+\.', "括號題號（有數字）"),
-                    (r'^\d+\.', "純數字題號"),
+                    (r'[（(]\s*[）)]\s*\d+[.、．]', "格式1：空格題號 （ ）1."),
+                    (r'(?:^|\s)\d+[.、．]\s', "格式2：行首數字 1."),
+                    (r'第\s*\d+\s*[題题]', "格式3：第N題"),
                 ]
-                
+
                 for pattern, desc in question_patterns:
-                    matches = list(re.finditer(pattern, text)) if text else []
+                    matches = list(re.finditer(pattern, text, re.MULTILINE)) if text else []
                     st.write(f"**{desc}**: 找到 {len(matches)} 個")
-                
+
+                half_opts = len(re.findall(r'\([A-D]\)', text)) if text else 0
+                full_opts = len(re.findall(r'（[A-D]）', text)) if text else 0
+                st.write(f"**選項括號**：半角 `(A)` {half_opts} 個 ／ 全角 `（A）` {full_opts} 個")
+
                 st.divider()
-                st.subheader("顯示前 10 個括號位置（調試用）")
-                matches = list(re.finditer(r'[（(]\s*[）)]', text)) if text else []
-                
+                st.subheader("前 10 個選項出現位置（調試用）")
+                matches = list(re.finditer(r'[（(][A-D][）)]', text)) if text else []
+
                 if matches:
                     for i, m in enumerate(matches[:10]):
-                        start = max(0, m.start() - 30)
-                        end = min(len(text), m.end() + 80)
-                        preview = text[start:end]
+                        start = max(0, m.start() - 40)
+                        end = min(len(text), m.end() + 60)
+                        preview = text[start:end].replace('\n', '↵')
                         st.code(f"位置 {i+1}: ...{preview}...", language="text")
         
         if uploaded_file and category_name:
