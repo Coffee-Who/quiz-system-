@@ -74,21 +74,41 @@ class PDFQuizParser:
         
         try:
             import anthropic
+            import os
+            import streamlit as st
             
-            client = anthropic.Anthropic()
+            # 嘗試從 Streamlit secrets 或環境變數讀取 API Key
+            api_key = None
+            
+            # 方式 1：Streamlit secrets
+            if hasattr(st, 'secrets') and 'ANTHROPIC_API_KEY' in st.secrets:
+                api_key = st.secrets['ANTHROPIC_API_KEY']
+            
+            # 方式 2：環境變數
+            if not api_key:
+                api_key = os.environ.get('ANTHROPIC_API_KEY')
+            
+            # 方式 3：直接使用（會自動找 ANTHROPIC_API_KEY 環境變數）
+            if not api_key:
+                client = anthropic.Anthropic()
+            else:
+                client = anthropic.Anthropic(api_key=api_key)
             
             prompt = f"""請從以下 PDF 提取的文本中，識別所有的選擇題題目。
 
-每個題目的格式應包含：
-- 題號（數字）
-- 題文（問題內容）
+每個題目包含：
+- 題號
+- 題文
 - 4 個選項（A、B、C、D）
 
-請返回 JSON 格式，每個題目一個物件，包含：
-{{"id": 題號, "text": "題文", "options": ["(A) 選項A", "(B) 選項B", "(C) 選項C", "(D) 選項D"]}}
+請返回 JSON 格式：
+[
+  {{"id": 1, "text": "題文...", "options": ["(A) 選項A", "(B) 選項B", "(C) 選項C", "(D) 選項D"]}},
+  ...
+]
 
 PDF 文本：
-{text}
+{text[:3000]}
 
 只返回 JSON 陣列，不要其他內容。"""
             
@@ -127,7 +147,8 @@ PDF 文本：
             
         except Exception as e:
             # 如果 API 呼叫失敗，回退到原始方法
-            pass
+            import streamlit as st
+            st.warning(f"⚠️ AI 解析失敗：{str(e)}，使用備用方法...")
         
         # 回退到正則表達式方法
         return PDFQuizParser._parse_questions_regex(text)
