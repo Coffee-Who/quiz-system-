@@ -70,20 +70,32 @@ class PDFQuizParser:
     
     @staticmethod
     def parse_questions(text: str) -> List[Dict]:
-        """解析題目 - 純正則表達式方法（不需要 API）"""
+        """解析題目 - 添加詳細調試日誌"""
+        
+        import streamlit as st
         
         questions = []
         
-        # 方法：直接找 (A) (B) (C) (D) 的選項行，然後向上找題號
-        # 分成多行，每行可能是題文或選項
+        # 調試：記錄過程
+        debug_log = []
+        
+        debug_log.append(f"📄 總文本長度：{len(text)} 字符")
         
         lines = text.split('\n')
+        debug_log.append(f"📋 總行數：{len(lines)} 行")
         
         # 第一步：找出所有包含選項的行
         option_lines = []
         for i, line in enumerate(lines):
             if re.search(r'\([A-D]\)', line):
                 option_lines.append(i)
+        
+        debug_log.append(f"✅ 找到 {len(option_lines)} 行包含選項 (A)-(D)")
+        
+        if len(option_lines) > 0:
+            debug_log.append(f"   前 3 個選項行：")
+            for i, line_idx in enumerate(option_lines[:3]):
+                debug_log.append(f"   - 行 {line_idx}: {lines[line_idx][:80]}")
         
         # 第二步：從選項向上找題號
         questions_found = {}
@@ -110,6 +122,8 @@ class PDFQuizParser:
                 
                 questions_found[q_num]["lines"].add(opt_line_idx)
         
+        debug_log.append(f"🔍 找到 {len(questions_found)} 個題號：{sorted(questions_found.keys())}")
+        
         # 第三步：收集每個題的選項
         for q_num in sorted(questions_found.keys()):
             q_info = questions_found[q_num]
@@ -121,6 +135,8 @@ class PDFQuizParser:
                 opt_line = lines[opt_line_idx]
                 opts = PDFQuizParser._extract_all_options(opt_line)
                 all_options.extend(opts)
+            
+            debug_log.append(f"   題 {q_num}：找到 {len(all_options)} 個選項")
             
             # 如果有選項，創建題目
             if len(all_options) >= 2:
@@ -141,6 +157,14 @@ class PDFQuizParser:
                     "analysis": f"第 {q_num} 題"
                 }
                 questions.append(question)
+                debug_log.append(f"   ✅ 題 {q_num} 已創建")
+            else:
+                debug_log.append(f"   ❌ 題 {q_num} 只有 {len(all_options)} 個選項，不夠")
+        
+        debug_log.append(f"\n✨ 最終：成功解析 {len(questions)} 個題目")
+        
+        # 存儲調試信息
+        st.session_state.pdf_parse_debug = "\n".join(debug_log)
         
         return questions
     
