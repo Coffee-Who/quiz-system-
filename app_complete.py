@@ -70,51 +70,64 @@ class PDFQuizParser:
     
     @staticmethod
     def parse_questions(text: str) -> List[Dict]:
-        """解析題目 - 支援選項在單獨行"""
+        """解析題目 - 支援中文題號和跨行選項"""
         lines = text.split('\n')
         questions = []
-        i = 0
         
+        # 中文數字映射
+        cn_nums = {'一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10}
+        
+        i = 0
         while i < len(lines):
             line = lines[i].strip()
             
-            # 匹配題號：（ ） 1. 或 ( ) 1.
-            if re.match(r'^[（(]\s*[）)]\s*\d+\.\s+', line):
-                q_match = re.match(r'^[（(]\s*[）)]\s*(\d+)\.\s+(.+)$', line)
+            # 跳過空行和標題
+            if not line or '、' not in line or any(x in line for x in ['單選', '填空', '是非', '複選', '段']):
+                i += 1
+                continue
+            
+            # 匹配中文題號：（ ） + 題目 或 ( ) + 題目
+            if re.match(r'^[（(]\s*[）)]\s+', line):
+                # 提取題號和題文
+                q_match = re.match(r'^[（(]\s*[）)]\s+(.+)$', line)
                 
                 if q_match:
-                    q_num = int(q_match.group(1))
-                    q_text = q_match.group(2)
+                    q_text = q_match.group(1)
+                    q_num = len(questions) + 1
                     
-                    # 查找選項（當前行或下一行）
+                    # 從下一行開始查找選項
                     options = []
+                    j = i + 1
                     
-                    # 先在當前行尋找選項
-                    if re.search(r'\([A-D]\)', line):
-                        matches = re.findall(r'\(([A-D])\)\s*([^(]*?)(?=\([A-D]\)|$)', line)
-                        for letter, content in matches:
-                            options.append(f"({letter}) {content.strip()}")
-                    
-                    # 如果當前行沒有選項，向下搜尋最多 3 行
-                    if not options:
-                        for j in range(i + 1, min(i + 4, len(lines))):
-                            opt_line = lines[j].strip()
-                            
-                            if re.search(r'\([A-D]\)', opt_line):
-                                matches = re.findall(r'\(([A-D])\)\s*([^(]*?)(?=\([A-D]\)|$)', opt_line)
-                                
-                                for letter, content in matches:
-                                    options.append(f"({letter}) {content.strip()}")
-                                
-                                if len(options) >= 4:
-                                    options = options[:4]
-                                    break
-                    
-                    if options and len(options) >= 2:  # 至少有 2 個選項就認為是有效題目
-                        # 補齊到 4 個選項
-                        while len(options) < 4:
-                            options.append(f"({chr(65 + len(options))}) ")
+                    # 搜尋最多 10 行找選項
+                    while j < min(i + 10, len(lines)) and len(options) < 4:
+                        opt_line = lines[j].strip()
                         
+                        if not opt_line:
+                            j += 1
+                            continue
+                        
+                        # 匹配選項：(A)... (B)... 等
+                        # 支援多種格式：(A) (B)、(A)(B)、A) B)
+                        matches = re.findall(
+                            r'[\(（]?([A-D])[\)）]\s*([^(（]*?)(?=[\(（][A-D][\)）]|$)',
+                            opt_line
+                        )
+                        
+                        if matches:
+                            for letter, content in matches:
+                                options.append(f"({letter}) {content.strip()}")
+                                if len(options) >= 4:
+                                    break
+                        
+                        # 如果這行有選項，可能還要看下一行
+                        if matches and len(options) < 4:
+                            j += 1
+                        else:
+                            break
+                    
+                    # 如果找到至少 2 個選項就算有效
+                    if len(options) >= 2:
                         question = {
                             "id": q_num,
                             "type": "single",
