@@ -57,6 +57,8 @@ class PDFQuizParser:
 
     # 支援半角 (A)、全角 （A）、全角字母 （Ａ） 三種格式
     OPTION_RE = re.compile(r'[（(]([A-DＡ-Ｄ])[）)]')
+    # 詳解答案行格式：(A) 1. 解析文字 → 要跳過
+    ANSWER_KEY_RE = re.compile(r'^\s*[（(][A-DＡ-Ｄ][）)]\s+\d+[.、．]')
 
     # 題號格式（多種）
     Q_NUM_PATTERNS = [
@@ -101,6 +103,10 @@ class PDFQuizParser:
         opt_groups = []
         i = 0
         while i < len(lines):
+            # 跳過詳解答案行，例如：(A) 1. 此題無解析
+            if PDFQuizParser.ANSWER_KEY_RE.match(lines[i]):
+                i += 1
+                continue
             letters = get_letters(lines[i])
             if letters:
                 opt_lines = [lines[i]]
