@@ -104,7 +104,24 @@ class PDFQuizParser:
     @staticmethod
     def parse_questions(text: str) -> List[Dict]:
         """先找選項行，再往上找題號 — 適合台灣考卷格式"""
-        lines = text.split('\n')
+        raw_lines = text.split('\n')
+
+        # 預處理：合併「（ ）」單獨一行 + 下一行為「N. 題目」的情況
+        BLANK_BOX_RE = re.compile(r'^[（(]\s*[）)]\s*$')
+        BARE_NUM_RE = re.compile(r'^(\d+)\s*[.、．]')
+        lines = []
+        k = 0
+        while k < len(raw_lines):
+            stripped = raw_lines[k].strip()
+            if BLANK_BOX_RE.match(stripped) and k + 1 < len(raw_lines):
+                next_s = raw_lines[k + 1].strip()
+                if BARE_NUM_RE.match(next_s):
+                    lines.append(stripped + ' ' + next_s)
+                    k += 2
+                    continue
+            lines.append(raw_lines[k])
+            k += 1
+
         debug_log = [
             f"📄 總字符：{len(text)}　📋 總行數：{len(lines)}",
         ]
