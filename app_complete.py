@@ -70,7 +70,7 @@ class PDFQuizParser:
     
     @staticmethod
     def parse_questions(text: str) -> List[Dict]:
-        """解析題目"""
+        """解析題目 - 使用 app_streamlit.py 的邏輯"""
         lines = text.split('\n')
         questions = []
         i = 0
@@ -78,7 +78,7 @@ class PDFQuizParser:
         while i < len(lines):
             line = lines[i].strip()
             
-            # 匹配題號
+            # 匹配題號：（ ） 1. 或 ( ) 1.
             if re.match(r'^[（(]\s*[）)]\s*\d+\.\s+', line):
                 q_match = re.match(r'^[（(]\s*[）)]\s*(\d+)\.\s+(.+)$', line)
                 
@@ -86,18 +86,25 @@ class PDFQuizParser:
                     q_num = int(q_match.group(1))
                     q_text = q_match.group(2)
                     
-                    # 查找選項
+                    # 查找選項（向下搜尋最多 5 行）
                     options = []
                     for j in range(i + 1, min(i + 5, len(lines))):
                         opt_line = lines[j].strip()
+                        
+                        # 匹配選項：(A) ... (B) ... (C) ... (D) ...
                         if re.search(r'\([A-D]\)', opt_line):
+                            # 提取所有選項
                             matches = re.findall(r'\(([A-D])\)\s*([^(]*?)(?=\([A-D]\)|$)', opt_line)
+                            
                             for letter, content in matches:
                                 options.append(f"({letter}) {content.strip()}")
+                            
+                            # 如果已經找到 4 個選項，停止
                             if len(options) >= 4:
+                                options = options[:4]
                                 break
                     
-                    if options:
+                    if options and len(options) >= 4:
                         question = {
                             "id": q_num,
                             "type": "single",
