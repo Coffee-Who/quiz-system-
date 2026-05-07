@@ -186,6 +186,21 @@ def page_quiz_manage():
         
         uploaded_file = st.file_uploader("選擇 PDF", type="pdf")
         
+        if uploaded_file:
+            st.success(f"✅ 已選擇: {uploaded_file.name}")
+            
+            # 調試：顯示原始文本
+            with st.expander("📄 查看提取的文本（調試用）"):
+                text = PDFQuizParser.extract_text(uploaded_file)
+                st.text_area(
+                    "原始文本內容",
+                    text[:2000] if text else "（無法提取）",
+                    height=300,
+                    disabled=True,
+                    key="debug_text"
+                )
+                st.info("👆 請截圖上方的文本，並告訴我題號格式是什麼樣")
+        
         if uploaded_file and category_name:
             if st.button("🔍 解析並匯入", use_container_width=True):
                 with st.spinner("正在解析..."):
@@ -193,6 +208,8 @@ def page_quiz_manage():
                     text = PDFQuizParser.extract_text(uploaded_file)
                     if not text:
                         st.stop()
+                    
+                    st.info(f"✅ 成功提取 {len(text)} 個字符")
                     
                     # 解析題目
                     questions = PDFQuizParser.parse_questions(text)
@@ -213,6 +230,7 @@ def page_quiz_manage():
                             st.warning(f"⚠️ 分類名稱已存在")
                     else:
                         st.error("❌ 未找到任何題目")
+                        st.warning("請檢查 PDF 格式是否標準，或在上方「查看提取的文本」中查看內容")
     
     # Tab 2: 查看分類
     with tabs[1]:
