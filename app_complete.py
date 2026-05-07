@@ -22,6 +22,8 @@ import time
 import re
 from datetime import datetime
 from typing import List, Dict
+from PIL import Image
+import pytesseract
 from database import QuizDatabase
 
 
@@ -243,6 +245,20 @@ class PDFQuizParser:
 
 
 
+# ===== OCR 解析器 =====
+
+def ocr_images(image_files: list) -> str:
+    """用 Tesseract OCR 提取圖片文字"""
+    full_text = []
+    for img_file in image_files:
+        img = Image.open(img_file)
+        # 轉灰階提升辨識率
+        img = img.convert('L')
+        text = pytesseract.image_to_string(img, lang='chi_tra+eng', config='--psm 6')
+        full_text.append(text)
+    return "\n".join(full_text)
+
+
 # ===== 圖片解析器 =====
 
 def parse_images_with_claude(image_files: list, api_key: str) -> List[Dict]:
@@ -361,21 +377,30 @@ def page_quiz_manage():
     
     # Tab 0: 上傳圖片
     with tabs[0]:
-        st.subheader("📷 上傳考卷圖片（JPG/PNG）— 由 Claude AI 辨識")
-        st.info("支援多張圖片（一次上傳整份考卷），辨識率遠高於 PDF 解析。")
-
-        api_key = st.text_input(
-            "Anthropic API Key",
-            type="password",
-            placeholder="sk-ant-...",
-            help="前往 console.anthropic.com 取得 API Key"
-        )
+        st.subheader("📷 上傳考卷圖片（JPG/PNG）")
 
         col1, col2 = st.columns(2)
         with col1:
             img_category = st.text_input("分類名稱", placeholder="例如：生物 2-3 突變", key="img_cat")
         with col2:
             img_subject = st.selectbox("科目", ["數學", "國文", "英文", "社會", "自然", "其他"], key="img_sub")
+
+        ocr_method = st.radio(
+            "辨識方式",
+            ["🆓 免費 OCR（Tesseract）", "🤖 Claude AI（付費，更準確）"],
+            horizontal=True
+        )
+
+        if "Claude" in ocr_method:
+            api_key = st.text_input(
+                "Anthropic API Key",
+                type="password",
+                placeholder="sk-ant-...",
+                help="前往 console.anthropic.com 取得"
+            )
+        else:
+            api_key = None
+            st.info("🆓 使用免費 Tesseract OCR，圖片越清晰辨識越準確")
 
         uploaded_imgs = st.file_uploader(
             "選擇圖片（可多選，按頁序上傳）",
@@ -390,35 +415,51 @@ def page_quiz_manage():
             for i, f in enumerate(uploaded_imgs[:3]):
                 cols[i].image(f, caption=f.name, use_column_width=True)
 
-        if uploaded_imgs and img_category and api_key:
-            if st.button("🤖 用 AI 辨識並匯入", use_container_width=True, type="primary"):
-                with st.spinner("Claude AI 正在辨識圖片中的題目..."):
-                    try:
-                        questions = parse_images_with_claude(uploaded_imgs, api_key)
-                        if questions:
-                            st.success(f"✅ AI 辨識到 {len(questions)} 道題目")
-                            with st.expander("預覽辨識結果"):
-                                for q in questions[:3]:
-                                    st.write(f"**Q{q['id']}** {q['text']}")
-                                    for opt in q['options']:
-                                        st.write(f"　{opt}")
-                                    st.divider()
+        if uploaded_imgs and img_category:
+            btn_label = "🤖 Claude AI 辨識並匯入" if "Claude" in ocr_method else "🔍 OCR 辨識並匯入"
+            if st.button(btn_label, use_container_width=True, type="primary"):
+                if "Claude" in ocr_method:
+                    if not api_key:
+                        st.warning("⚠️ 請輸入 Anthropic API Key")
+                        st.stop()
+                    with st.spinner("Claude AI 正在辨識..."):
+                        try:
+                            questions = parse_images_with_claude(uploaded_imgs, api_key)
+                        except Exception as e:
+                            st.error(f"❌ Claude AI 錯誤：{e}")
+                            st.stop()
+                else:
+                    with st.spinner("OCR 辨識中（繁體中文）..."):
+                        try:
+                            text = ocr_images(uploaded_imgs)
+                            st.session_state.ocr_raw_text = text
+                            lines = text.split('\n')
+                            questions = PDFQuizParser.parse_questions(text)
+                        except Exception as e:
+                            st.error(f"❌ OCR 錯誤：{e}")
+                            st.stop()
 
-                            if st.session_state.db.add_category(img_category, img_subject):
-                                categories = st.session_state.db.get_categories()
-                                cat_id = [c['id'] for c in categories if c['name'] == img_category][0]
-                                count = st.session_state.db.add_questions(cat_id, questions)
-                                st.success(f"✅ 成功匯入 {count} 道題目到【{img_category}】")
-                            else:
-                                st.warning("⚠️ 分類名稱已存在")
-                        else:
-                            st.error("❌ 未辨識到任何題目")
-                    except json.JSONDecodeError as e:
-                        st.error(f"❌ AI 回傳格式錯誤：{e}")
-                    except Exception as e:
-                        st.error(f"❌ 發生錯誤：{e}")
-        elif uploaded_imgs and img_category and not api_key:
-            st.warning("⚠️ 請輸入 Anthropic API Key")
+                    with st.expander("📄 查看 OCR 原始文字"):
+                        st.text_area("OCR 結果", text[:3000], height=300, disabled=True)
+
+                if questions:
+                    st.success(f"✅ 辨識到 {len(questions)} 道題目")
+                    with st.expander("預覽前 3 題"):
+                        for q in questions[:3]:
+                            st.write(f"**Q{q['id']}** {q['text']}")
+                            for opt in q['options']:
+                                st.write(f"　{opt}")
+                            st.divider()
+
+                    if st.session_state.db.add_category(img_category, img_subject):
+                        categories = st.session_state.db.get_categories()
+                        cat_id = [c['id'] for c in categories if c['name'] == img_category][0]
+                        count = st.session_state.db.add_questions(cat_id, questions)
+                        st.success(f"✅ 成功匯入 {count} 道題目到【{img_category}】")
+                    else:
+                        st.warning("⚠️ 分類名稱已存在")
+                else:
+                    st.error("❌ 未辨識到任何題目，請確認圖片清晰度")
 
     # Tab 1: 上傳 PDF
     with tabs[1]:
