@@ -70,7 +70,71 @@ class PDFQuizParser:
     
     @staticmethod
     def parse_questions(text: str) -> List[Dict]:
-        """解析題目 - 使用文本塊法避免行分割問題"""
+        """用 Claude API 解析 PDF 文本中的題目"""
+        
+        try:
+            import anthropic
+            
+            client = anthropic.Anthropic()
+            
+            prompt = f"""請從以下 PDF 提取的文本中，識別所有的選擇題題目。
+
+每個題目的格式應包含：
+- 題號（數字）
+- 題文（問題內容）
+- 4 個選項（A、B、C、D）
+
+請返回 JSON 格式，每個題目一個物件，包含：
+{{"id": 題號, "text": "題文", "options": ["(A) 選項A", "(B) 選項B", "(C) 選項C", "(D) 選項D"]}}
+
+PDF 文本：
+{text}
+
+只返回 JSON 陣列，不要其他內容。"""
+            
+            message = client.messages.create(
+                model="claude-opus-4-20250805",
+                max_tokens=4000,
+                messages=[
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            
+            response_text = message.content[0].text
+            
+            # 解析 JSON
+            import json
+            import re
+            
+            # 試著找出 JSON 陣列
+            json_match = re.search(r'\[\s*\{.*\}\s*\]', response_text, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+                data = json.loads(json_str)
+                
+                questions = []
+                for item in data:
+                    questions.append({
+                        "id": item.get("id", len(questions) + 1),
+                        "type": "single",
+                        "text": item.get("text", ""),
+                        "options": item.get("options", []),
+                        "correct": -1,
+                        "analysis": f"第 {item.get('id', len(questions) + 1)} 題"
+                    })
+                
+                return questions
+            
+        except Exception as e:
+            # 如果 API 呼叫失敗，回退到原始方法
+            pass
+        
+        # 回退到正則表達式方法
+        return PDFQuizParser._parse_questions_regex(text)
+    
+    @staticmethod
+    def _parse_questions_regex(text: str) -> List[Dict]:
+        """備用方法：用正則表達式解析"""
         
         questions = []
         
