@@ -22,9 +22,13 @@ import time
 import re
 from datetime import datetime
 from typing import List, Dict
-from PIL import Image
-import pytesseract
 from database import QuizDatabase
+try:
+    from PIL import Image
+    import pytesseract
+    OCR_AVAILABLE = True
+except ImportError:
+    OCR_AVAILABLE = False
 
 
 # ===== 頁面配置 =====
@@ -249,10 +253,11 @@ class PDFQuizParser:
 
 def ocr_images(image_files: list) -> str:
     """用 Tesseract OCR 提取圖片文字"""
+    if not OCR_AVAILABLE:
+        raise RuntimeError("pytesseract 未安裝，請確認 packages.txt 與 requirements.txt 已更新並重新部署")
     full_text = []
     for img_file in image_files:
         img = Image.open(img_file)
-        # 轉灰階提升辨識率
         img = img.convert('L')
         text = pytesseract.image_to_string(img, lang='chi_tra+eng', config='--psm 6')
         full_text.append(text)
