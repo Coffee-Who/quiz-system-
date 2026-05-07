@@ -80,6 +80,9 @@ class PDFQuizParser:
         lines = text.split('\n')
         i = 0
         
+        # 調試：記錄找到的題號
+        found_questions_debug = []
+        
         while i < len(lines):
             line = lines[i]
             match = re.search(pattern, line)
@@ -88,6 +91,8 @@ class PDFQuizParser:
                 q_num = int(match.group(1))
                 q_start = match.end()
                 q_text = line[q_start:].strip()
+                
+                found_questions_debug.append(f"題{q_num}")
                 
                 # 蒐集後續行直到下一個題號
                 options = []
@@ -106,7 +111,7 @@ class PDFQuizParser:
                         j += 1
                         continue
                     
-                    # 尋找選項：(A) (B) 等
+                    # 尋找選項：(A) (B) 等（全角或半角括號都支援）
                     if re.search(r'[（(][A-D][）)]', next_line_stripped):
                         opts = PDFQuizParser._extract_all_options(next_line_stripped)
                         options.extend(opts)
@@ -132,11 +137,20 @@ class PDFQuizParser:
                         "analysis": f"第 {q_num} 題"
                     }
                     questions.append(question)
+                else:
+                    # 調試：記錄未成功創建的題目
+                    found_questions_debug.append(f"  ❌ 題{q_num}：只找到 {len(options)} 個選項")
                 
                 i = j
                 continue
             
             i += 1
+        
+        # 將調試信息存儲在 session_state（供前端顯示）
+        import streamlit as st
+        if 'last_parse_debug' not in st.session_state:
+            st.session_state.last_parse_debug = []
+        st.session_state.last_parse_debug = found_questions_debug
         
         return questions
 
