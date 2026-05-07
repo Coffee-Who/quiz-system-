@@ -70,100 +70,106 @@ class PDFQuizParser:
     
     @staticmethod
     def parse_questions(text: str) -> List[Dict]:
-        """解析題目 - 完全適配您的 PDF 格式"""
+        """解析題目 - 使用分塊法避免行分割問題"""
         
-        lines = text.split('\n')
+        # 使用正則找出所有題號位置（比行分割更可靠）
+        # 匹配：（ ） 或 ( ) 後面跟數字和句號
+        question_pattern = r'[（(]\s*[）)]\s*(\d+)\.\s*'
+        
+        matches = list(re.finditer(question_pattern, text))
+        
+        if not matches:
+            return []
+        
         questions = []
-        i = 0
         
-        while i < len(lines):
-            line = lines[i].strip()
+        # 從每個題號開始，到下一個題號結束，提取該題的所有內容
+        for idx, match in enumerate(matches):
+            q_num = int(match.group(1))
+            q_start = match.end()  # 題號後的位置
             
-            # 匹配題號：（ ） 1. 或 ( ) 1.
-            if re.match(r'^[（(]\s*[）)]\s*\d+\.', line):
-                # 提取題號
-                q_match = re.match(r'^[（(]\s*[）)]\s*(\d+)\.\s*(.+)$', line)
-                
-                if q_match:
-                    q_num = int(q_match.group(1))
-                    q_text = q_match.group(2)
-                    
-                    # 蒐集後續行的文本和選項
-                    combined_text = q_text
-                    j = i + 1
-                    
-                    # 向下蒐集直到找到 4 個選項或遇到下一個題號
-                    options = []
-                    
-                    while j < len(lines) and len(options) < 4:
-                        next_line = lines[j].strip()
-                        
-                        # 如果遇到下一個題號，停止
-                        if re.match(r'^[（(]\s*[）)]\s*\d+\.', next_line):
-                            break
-                        
-                        if not next_line:
-                            j += 1
-                            continue
-                        
-                        # 尋找選項（全角或半角括號）
-                        # 支援格式：（A）（B）、(A)(B)、(A) (B) 等
-                        opts = PDFQuizParser._extract_options_from_line(next_line)
-                        
-                        if opts:
-                            options.extend(opts)
-                        else:
-                            # 沒有選項，添加到題文
-                            combined_text += " " + next_line
-                        
-                        j += 1
-                    
-                    # 清理題文（移除選項部分）
-                    q_text = combined_text
-                    for letter in ['A', 'B', 'C', 'D']:
-                        # 移除題文末尾的選項
-                        q_text = re.sub(rf'\s*[（(]{letter}[）)].*$', '', q_text)
-                    
-                    q_text = q_text.strip()
-                    
-                    # 如果找到足夠選項就創建題目
-                    if len(options) >= 2:
-                        question = {
-                            "id": q_num,
-                            "type": "single",
-                            "text": q_text,
-                            "options": options[:4],
-                            "correct": -1,
-                            "analysis": f"第 {q_num} 題"
-                        }
-                        questions.append(question)
-                        
-                        # 跳過已處理的行
-                        i = j
-                        continue
+            # 找下一個題號的位置（或文末）
+            if idx + 1 < len(matches):
+                q_end = matches[idx + 1].start()
+            else:
+                q_end = len(text)
             
-            i += 1
+            # 提取該題的完整文本
+            q_block = text[q_start:q_end]
+            
+            # 分離題文和選項
+            q_text, options = PDFQuizParser._split_question_and_options(q_block)
+            
+            # 創建題目
+            if len(options) >= 2:
+                question = {
+                    "id": q_num,
+                    "type": "single",
+                    "text": q_text.strip(),
+                    "options": options[:4],
+                    "correct": -1,
+                    "analysis": f"第 {q_num} 題"
+                }
+                questions.append(question)
         
         return questions
     
     @staticmethod
-    def _extract_options_from_line(line: str) -> List[str]:
-        """從一行文本中提取所有選項"""
+    def _split_question_and_options(block: str) -> tuple:
+        """從題目文本區塊中分離題文和選項"""
+        
+        # 尋找第一個選項的位置
+        option_pattern = r'[（(]([A-D])[）)]'
+        first_option = re.search(option_pattern, block)
+        
+        if first_option:
+            # 題文是第一個選項之前的部分
+            q_text = block[:first_option.start()]
+            options_block = block[first_option.start():]
+        else:
+            # 沒有找到選項，整個都是題文
+            return block, []
+        
+        # 從選項區塊中提取所有選項
+        options = PDFQuizParser._extract_all_options(options_block)
+        
+        return q_text, options
+    
+    @staticmethod
+    def _extract_all_options(block: str) -> List[str]:
+        """從選項區塊提取所有 A B C D 選項"""
         options = []
         
-        # 尋找全角和半角括號
-        pattern = r'[（(]([A-D])[）)]\s*([^（(]*?)(?=[（(][A-D][）)]|$)'
-        matches = re.findall(pattern, line)
+        # 找所有選項的位置
+        positions = []
+        for match in re.finditer(r'[（(]([A-D])[）)]', block):
+            positions.append({
+                'letter': match.group(1),
+                'start': match.end(),
+                'pos': match.start()
+            })
         
-        if matches:
-            for letter, content in matches:
-                # 清理內容
-                content = content.strip()
-                # 移除末尾標點
-                content = re.sub(r'[。，、；：\.\,;:]$', '', content)
-                
-                if content:
-                    options.append(f"({letter}) {content}")
+        if not positions:
+            return []
+        
+        # 根據位置提取內容
+        for i, pos_info in enumerate(positions):
+            letter = pos_info['letter']
+            text_start = pos_info['start']
+            
+            # 到下一個選項開始前結束
+            if i + 1 < len(positions):
+                text_end = positions[i + 1]['pos']
+            else:
+                text_end = len(block)
+            
+            content = block[text_start:text_end].strip()
+            
+            # 移除末尾標點符號
+            content = re.sub(r'[。，、；：\.\,;:\s]+$', '', content)
+            
+            if content:
+                options.append(f"({letter}) {content}")
         
         return options
 
