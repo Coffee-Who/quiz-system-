@@ -71,9 +71,11 @@ class PDFQuizParser:
     # 題號格式（多種）
     Q_NUM_PATTERNS = [
         re.compile(r'[（(]\s*[）)]\s*(\d+)\s*[.、．]'),  # （ ）1.
-        re.compile(r'(?:^|\s)(\d+)\s*[.、．]\s'),         # 1.
+        re.compile(r'[）)]\s+(\d+)\s*[.、．]'),           # ) 1. (排除引用〔92.〕)
         re.compile(r'第\s*(\d+)\s*[題题]'),               # 第1題
     ]
+    # 詳解/答案卷頁偵測：整頁第一行含「詳解」或「解答卷」就跳過整頁
+    ANSWER_PAGE_RE = re.compile(r'詳解|解答卷')
 
     @staticmethod
     def extract_text(pdf_file) -> str:
@@ -82,8 +84,18 @@ class PDFQuizParser:
                 pages_text = []
                 for page in pdf.pages:
                     t = page.extract_text()
-                    if t:
-                        pages_text.append(t)
+                    if not t:
+                        continue
+                    # 跳過詳解/解答卷頁（標題關鍵字 或 答案行密度≥20%）
+                    first_lines = '\n'.join(t.split('\n')[:3])
+                    if PDFQuizParser.ANSWER_PAGE_RE.search(first_lines):
+                        continue
+                    non_empty = [l for l in t.split('\n') if l.strip()]
+                    if non_empty:
+                        ans_count = sum(1 for l in non_empty if PDFQuizParser.ANSWER_KEY_RE.match(l))
+                        if ans_count / len(non_empty) >= 0.20:
+                            continue
+                    pages_text.append(t)
             return "\n".join(pages_text)
         except Exception as e:
             st.error(f"❌ PDF 讀取失敗: {e}")
@@ -137,7 +149,7 @@ class PDFQuizParser:
         debug_log.append(f"📌 選項群組：{len(opt_groups)} 個")
 
         questions = []
-        seen_q_nums = set()
+        seq_id = 0  # 跨段連續編號，避免不同段落題號衝突
 
         for opt_text, opt_line_idx in opt_groups:
             options = PDFQuizParser._extract_all_options(opt_text)
@@ -172,13 +184,13 @@ class PDFQuizParser:
                 else:
                     q_text_parts.insert(0, line)
 
-            if q_num is None or q_num in seen_q_nums:
+            if q_num is None:
                 continue
-            seen_q_nums.add(q_num)
 
+            seq_id += 1
             q_text = ' '.join(q_text_parts).strip()
             questions.append({
-                "id": q_num,
+                "id": seq_id,
                 "type": "single",
                 "text": q_text,
                 "options": options[:4],
@@ -186,7 +198,6 @@ class PDFQuizParser:
                 "analysis": f"第 {q_num} 題"
             })
 
-        questions.sort(key=lambda x: x['id'])
         q_ids = [str(q['id']) for q in questions]
         debug_log.append(f"✨ 最終解析：{len(questions)} 題")
         debug_log.append(f"📋 題號列表：{', '.join(q_ids) if q_ids else '（無）'}")
