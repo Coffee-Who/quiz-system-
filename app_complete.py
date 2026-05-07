@@ -70,7 +70,7 @@ class PDFQuizParser:
     
     @staticmethod
     def parse_questions(text: str) -> List[Dict]:
-        """解析題目 - 使用 app_streamlit.py 的邏輯"""
+        """解析題目 - 支援選項在單獨行"""
         lines = text.split('\n')
         questions = []
         i = 0
@@ -86,25 +86,35 @@ class PDFQuizParser:
                     q_num = int(q_match.group(1))
                     q_text = q_match.group(2)
                     
-                    # 查找選項（向下搜尋最多 5 行）
+                    # 查找選項（當前行或下一行）
                     options = []
-                    for j in range(i + 1, min(i + 5, len(lines))):
-                        opt_line = lines[j].strip()
-                        
-                        # 匹配選項：(A) ... (B) ... (C) ... (D) ...
-                        if re.search(r'\([A-D]\)', opt_line):
-                            # 提取所有選項
-                            matches = re.findall(r'\(([A-D])\)\s*([^(]*?)(?=\([A-D]\)|$)', opt_line)
-                            
-                            for letter, content in matches:
-                                options.append(f"({letter}) {content.strip()}")
-                            
-                            # 如果已經找到 4 個選項，停止
-                            if len(options) >= 4:
-                                options = options[:4]
-                                break
                     
-                    if options and len(options) >= 4:
+                    # 先在當前行尋找選項
+                    if re.search(r'\([A-D]\)', line):
+                        matches = re.findall(r'\(([A-D])\)\s*([^(]*?)(?=\([A-D]\)|$)', line)
+                        for letter, content in matches:
+                            options.append(f"({letter}) {content.strip()}")
+                    
+                    # 如果當前行沒有選項，向下搜尋最多 3 行
+                    if not options:
+                        for j in range(i + 1, min(i + 4, len(lines))):
+                            opt_line = lines[j].strip()
+                            
+                            if re.search(r'\([A-D]\)', opt_line):
+                                matches = re.findall(r'\(([A-D])\)\s*([^(]*?)(?=\([A-D]\)|$)', opt_line)
+                                
+                                for letter, content in matches:
+                                    options.append(f"({letter}) {content.strip()}")
+                                
+                                if len(options) >= 4:
+                                    options = options[:4]
+                                    break
+                    
+                    if options and len(options) >= 2:  # 至少有 2 個選項就認為是有效題目
+                        # 補齊到 4 個選項
+                        while len(options) < 4:
+                            options.append(f"({chr(65 + len(options))}) ")
+                        
                         question = {
                             "id": q_num,
                             "type": "single",
