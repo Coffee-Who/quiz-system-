@@ -70,36 +70,8 @@ class PDFQuizParser:
     
     @staticmethod
     def parse_questions(text: str) -> List[Dict]:
-        """解析題目 - 支援多種格式"""
+        """解析題目 - 完全適配您的 PDF 格式"""
         
-        # 先嘗試不同的解析規則，取結果最多的
-        results = []
-        
-        # 規則 1：（ ） + 題目（跨行選項）
-        result1 = PDFQuizParser._parse_format1(text)
-        results.append(("格式1（括號題號）", result1))
-        
-        # 規則 2：中文數字題號（一、二、三）
-        result2 = PDFQuizParser._parse_format2(text)
-        results.append(("格式2（中文題號）", result2))
-        
-        # 規則 3：純數字題號（1. 2. 3.）
-        result3 = PDFQuizParser._parse_format3(text)
-        results.append(("格式3（數字題號）", result3))
-        
-        # 規則 4：選擇題標記（○ ◎ □ ☐）
-        result4 = PDFQuizParser._parse_format4(text)
-        results.append(("格式4（符號題號）", result4))
-        
-        # 返回題目最多的結果
-        best_result = max(results, key=lambda x: len(x[1]))
-        st.session_state.detected_format = best_result[0]
-        
-        return best_result[1]
-    
-    @staticmethod
-    def _parse_format1(text: str) -> List[Dict]:
-        """格式1：（ ） + 題目 + 選項(A)(B)(C)(D)"""
         lines = text.split('\n')
         questions = []
         i = 0
@@ -107,142 +79,54 @@ class PDFQuizParser:
         while i < len(lines):
             line = lines[i].strip()
             
-            if re.match(r'^[（(]\s*[）)]\s+', line):
-                q_match = re.match(r'^[（(]\s*[）)]\s+(.+)$', line)
-                
-                if q_match:
-                    q_text = q_match.group(1)
-                    q_num = len(questions) + 1
-                    
-                    options = []
-                    for j in range(i + 1, min(i + 10, len(lines))):
-                        opt_line = lines[j].strip()
-                        
-                        if not opt_line:
-                            continue
-                        
-                        matches = re.findall(
-                            r'[\(（]?([A-D])[\)）]\s*([^(（]*?)(?=[\(（][A-D][\)）]|$)',
-                            opt_line
-                        )
-                        
-                        if matches:
-                            for letter, content in matches:
-                                options.append(f"({letter}) {content.strip()}")
-                                if len(options) >= 4:
-                                    break
-                        
-                        if len(options) >= 4:
-                            break
-                    
-                    if len(options) >= 2:
-                        question = {
-                            "id": q_num,
-                            "type": "single",
-                            "text": q_text,
-                            "options": options[:4],
-                            "correct": -1,
-                            "analysis": f"第 {q_num} 題"
-                        }
-                        questions.append(question)
-            
-            i += 1
-        
-        return questions
-    
-    @staticmethod
-    def _parse_format2(text: str) -> List[Dict]:
-        """格式2：中文數字（一、二、三）"""
-        lines = text.split('\n')
-        questions = []
-        cn_nums = {'一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10}
-        
-        i = 0
-        while i < len(lines):
-            line = lines[i].strip()
-            
-            # 匹配中文題號
-            match = re.match(r'^([一二三四五六七八九十])[、、]\s*(.+)$', line)
-            
-            if match:
-                q_text = match.group(2)
-                q_num = len(questions) + 1
-                
-                options = []
-                for j in range(i + 1, min(i + 8, len(lines))):
-                    opt_line = lines[j].strip()
-                    
-                    if not opt_line or re.match(r'^[一二三四五六七八九十]', opt_line):
-                        break
-                    
-                    matches = re.findall(
-                        r'[\(（]?([A-D])[\)）]\s*([^(（]*?)(?=[\(（][A-D][\)）]|$)',
-                        opt_line
-                    )
-                    
-                    if matches:
-                        for letter, content in matches:
-                            options.append(f"({letter}) {content.strip()}")
-                            if len(options) >= 4:
-                                break
-                    
-                    if len(options) >= 4:
-                        break
-                
-                if len(options) >= 2:
-                    question = {
-                        "id": q_num,
-                        "type": "single",
-                        "text": q_text,
-                        "options": options[:4],
-                        "correct": -1,
-                        "analysis": f"第 {q_num} 題"
-                    }
-                    questions.append(question)
-            
-            i += 1
-        
-        return questions
-    
-    @staticmethod
-    def _parse_format3(text: str) -> List[Dict]:
-        """格式3：純數字題號（1. 2. 3.）"""
-        lines = text.split('\n')
-        questions = []
-        
-        i = 0
-        while i < len(lines):
-            line = lines[i].strip()
-            
-            # 匹配數字題號
-            if re.match(r'^\d+\.\s+', line):
-                q_match = re.match(r'^(\d+)\.\s+(.+)$', line)
+            # 匹配題號：（ ） 1. 或 ( ) 1.
+            if re.match(r'^[（(]\s*[）)]\s*\d+\.', line):
+                # 提取題號
+                q_match = re.match(r'^[（(]\s*[）)]\s*(\d+)\.\s*(.+)$', line)
                 
                 if q_match:
                     q_num = int(q_match.group(1))
                     q_text = q_match.group(2)
                     
-                    options = []
-                    for j in range(i + 1, min(i + 6, len(lines))):
-                        opt_line = lines[j].strip()
-                        
-                        if not opt_line or re.match(r'^\d+\.', opt_line):
-                            break
-                        
-                        matches = re.findall(
-                            r'[\(（]?([A-D])[\)）]\s*([^(（]*?)(?=[\(（][A-D][\)）]|$)',
-                            opt_line
-                        )
-                        
-                        if matches:
-                            for letter, content in matches:
-                                options.append(f"({letter}) {content.strip()}")
-                                if len(options) >= 4:
-                                    break
-                        
-                        if len(options) >= 4:
-                            break
+                    # 蒐集後續行的文本和選項
+                    combined_text = q_text
+                    j = i + 1
                     
+                    # 向下蒐集直到找到 4 個選項或遇到下一個題號
+                    options = []
+                    
+                    while j < len(lines) and len(options) < 4:
+                        next_line = lines[j].strip()
+                        
+                        # 如果遇到下一個題號，停止
+                        if re.match(r'^[（(]\s*[）)]\s*\d+\.', next_line):
+                            break
+                        
+                        if not next_line:
+                            j += 1
+                            continue
+                        
+                        # 尋找選項（全角或半角括號）
+                        # 支援格式：（A）（B）、(A)(B)、(A) (B) 等
+                        opts = PDFQuizParser._extract_options_from_line(next_line)
+                        
+                        if opts:
+                            options.extend(opts)
+                        else:
+                            # 沒有選項，添加到題文
+                            combined_text += " " + next_line
+                        
+                        j += 1
+                    
+                    # 清理題文（移除選項部分）
+                    q_text = combined_text
+                    for letter in ['A', 'B', 'C', 'D']:
+                        # 移除題文末尾的選項
+                        q_text = re.sub(rf'\s*[（(]{letter}[）)].*$', '', q_text)
+                    
+                    q_text = q_text.strip()
+                    
+                    # 如果找到足夠選項就創建題目
                     if len(options) >= 2:
                         question = {
                             "id": q_num,
@@ -253,64 +137,36 @@ class PDFQuizParser:
                             "analysis": f"第 {q_num} 題"
                         }
                         questions.append(question)
+                        
+                        # 跳過已處理的行
+                        i = j
+                        continue
             
             i += 1
         
         return questions
     
     @staticmethod
-    def _parse_format4(text: str) -> List[Dict]:
-        """格式4：特殊符號題號（○ ◎ □）"""
-        lines = text.split('\n')
-        questions = []
+    def _extract_options_from_line(line: str) -> List[str]:
+        """從一行文本中提取所有選項"""
+        options = []
         
-        i = 0
-        while i < len(lines):
-            line = lines[i].strip()
-            
-            # 匹配特殊符號
-            if re.search(r'^[○◎□☐✓]\s*', line):
-                q_match = re.match(r'^[○◎□☐✓]\s+(.+)$', line)
+        # 尋找全角和半角括號
+        pattern = r'[（(]([A-D])[）)]\s*([^（(]*?)(?=[（(][A-D][）)]|$)'
+        matches = re.findall(pattern, line)
+        
+        if matches:
+            for letter, content in matches:
+                # 清理內容
+                content = content.strip()
+                # 移除末尾標點
+                content = re.sub(r'[。，、；：\.\,;:]$', '', content)
                 
-                if q_match:
-                    q_text = q_match.group(1)
-                    q_num = len(questions) + 1
-                    
-                    options = []
-                    for j in range(i + 1, min(i + 6, len(lines))):
-                        opt_line = lines[j].strip()
-                        
-                        if not opt_line or re.search(r'^[○◎□☐✓]', opt_line):
-                            break
-                        
-                        matches = re.findall(
-                            r'[\(（]?([A-D])[\)）]\s*([^(（]*?)(?=[\(（][A-D][\)）]|$)',
-                            opt_line
-                        )
-                        
-                        if matches:
-                            for letter, content in matches:
-                                options.append(f"({letter}) {content.strip()}")
-                                if len(options) >= 4:
-                                    break
-                        
-                        if len(options) >= 4:
-                            break
-                    
-                    if len(options) >= 2:
-                        question = {
-                            "id": q_num,
-                            "type": "single",
-                            "text": q_text,
-                            "options": options[:4],
-                            "correct": -1,
-                            "analysis": f"第 {q_num} 題"
-                        }
-                        questions.append(question)
-            
-            i += 1
+                if content:
+                    options.append(f"({letter}) {content}")
         
-        return questions
+        return options
+
 
 
 # ===== 頁面函數 =====
