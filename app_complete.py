@@ -70,20 +70,20 @@ class PDFQuizParser:
     
     @staticmethod
     def parse_questions(text: str) -> List[Dict]:
-        """解析題目 - 題號是 1. 2. 3. 數字"""
+        """解析題目 - 題號是 （ ） 1. 格式"""
         
         questions = []
         
-        # 找所有題號位置（1. 2. 3. ...）
-        # 必須在行首或空格後
-        pattern = r'^\s*(\d+)\.\s+'
+        # 找所有題號位置：（ ） + 數字 + .
+        # 可能有各種空格和括號變化
+        pattern = r'[（(]\s*[）)]\s*(\d+)\.\s*'
         
         lines = text.split('\n')
         i = 0
         
         while i < len(lines):
             line = lines[i]
-            match = re.match(pattern, line)
+            match = re.search(pattern, line)
             
             if match:
                 q_num = int(match.group(1))
@@ -98,23 +98,23 @@ class PDFQuizParser:
                     next_line = lines[j]
                     
                     # 檢查是否是下一個題號
-                    if re.match(r'^\s*\d+\.\s+', next_line):
+                    if re.search(pattern, next_line):
                         break
                     
-                    next_line = next_line.strip()
+                    next_line_stripped = next_line.strip()
                     
-                    if not next_line:
+                    if not next_line_stripped:
                         j += 1
                         continue
                     
                     # 尋找選項（(A) (B) (C) (D) 或 （A）（B）（C）（D））
-                    if re.search(r'[（(][A-D][）)]', next_line):
-                        opts = PDFQuizParser._extract_all_options(next_line)
+                    if re.search(r'[（(][A-D][）)]', next_line_stripped):
+                        opts = PDFQuizParser._extract_all_options(next_line_stripped)
                         options.extend(opts)
                     else:
                         # 沒有選項就加到題文
                         if len(options) == 0:
-                            q_text += " " + next_line
+                            q_text += " " + next_line_stripped
                     
                     j += 1
                     
