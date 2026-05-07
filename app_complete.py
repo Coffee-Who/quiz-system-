@@ -15,6 +15,8 @@ Streamlit + SQLite
 
 import streamlit as st
 import pdfplumber
+import anthropic
+import base64
 import json
 import time
 import re
@@ -241,6 +243,70 @@ class PDFQuizParser:
 
 
 
+# ===== 圖片解析器 =====
+
+def parse_images_with_claude(image_files: list, api_key: str) -> List[Dict]:
+    """用 Claude Vision 從圖片中提取題目"""
+    client = anthropic.Anthropic(api_key=api_key)
+
+    # 組合所有圖片
+    content = []
+    for img_file in image_files:
+        img_bytes = img_file.read()
+        b64 = base64.standard_b64encode(img_bytes).decode()
+        ext = img_file.name.rsplit('.', 1)[-1].lower()
+        media_type = f"image/{'jpeg' if ext in ('jpg','jpeg') else ext}"
+        content.append({
+            "type": "image",
+            "source": {"type": "base64", "media_type": media_type, "data": b64}
+        })
+
+    content.append({
+        "type": "text",
+        "text": """請從這些考卷圖片中提取所有選擇題，以 JSON 格式回傳。
+
+格式要求：
+[
+  {
+    "id": 題號(數字),
+    "text": "題目文字（不含題號、不含選項）",
+    "options": ["(A) 選項A內容", "(B) 選項B內容", "(C) 選項C內容", "(D) 選項D內容"]
+  }
+]
+
+規則：
+- 每題必須有完整的 ABCD 四個選項
+- 題目文字要完整，包含多行合併
+- 選項文字不要包含括號字母，已在格式中標示
+- 只輸出 JSON，不要其他說明文字
+- 若某題選項不完整（如有圖形選項），仍要列出文字部分"""
+    })
+
+    response = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=8000,
+        messages=[{"role": "user", "content": content}]
+    )
+
+    raw = response.content[0].text.strip()
+    # 去除 markdown 代碼塊
+    raw = re.sub(r'^```(?:json)?\s*', '', raw)
+    raw = re.sub(r'\s*```$', '', raw)
+
+    data = json.loads(raw)
+    questions = []
+    for q in data:
+        questions.append({
+            "id": int(q.get("id", 0)),
+            "type": "single",
+            "text": q.get("text", "").strip(),
+            "options": q.get("options", [])[:4],
+            "correct": -1,
+            "analysis": f"第 {q.get('id', 0)} 題"
+        })
+    return questions
+
+
 # ===== 頁面函數 =====
 
 def page_home():
@@ -291,10 +357,71 @@ def page_quiz_manage():
     st.title("📚 題庫管理")
     st.markdown("---")
     
-    tabs = st.tabs(["上傳 PDF", "查看分類", "分類統計"])
+    tabs = st.tabs(["📷 上傳圖片(推薦)", "上傳 PDF", "查看分類", "分類統計"])
     
-    # Tab 1: 上傳 PDF
+    # Tab 0: 上傳圖片
     with tabs[0]:
+        st.subheader("📷 上傳考卷圖片（JPG/PNG）— 由 Claude AI 辨識")
+        st.info("支援多張圖片（一次上傳整份考卷），辨識率遠高於 PDF 解析。")
+
+        api_key = st.text_input(
+            "Anthropic API Key",
+            type="password",
+            placeholder="sk-ant-...",
+            help="前往 console.anthropic.com 取得 API Key"
+        )
+
+        col1, col2 = st.columns(2)
+        with col1:
+            img_category = st.text_input("分類名稱", placeholder="例如：生物 2-3 突變", key="img_cat")
+        with col2:
+            img_subject = st.selectbox("科目", ["數學", "國文", "英文", "社會", "自然", "其他"], key="img_sub")
+
+        uploaded_imgs = st.file_uploader(
+            "選擇圖片（可多選，按頁序上傳）",
+            type=["jpg", "jpeg", "png"],
+            accept_multiple_files=True,
+            key="img_uploader"
+        )
+
+        if uploaded_imgs:
+            st.success(f"✅ 已選擇 {len(uploaded_imgs)} 張圖片")
+            cols = st.columns(min(len(uploaded_imgs), 3))
+            for i, f in enumerate(uploaded_imgs[:3]):
+                cols[i].image(f, caption=f.name, use_column_width=True)
+
+        if uploaded_imgs and img_category and api_key:
+            if st.button("🤖 用 AI 辨識並匯入", use_container_width=True, type="primary"):
+                with st.spinner("Claude AI 正在辨識圖片中的題目..."):
+                    try:
+                        questions = parse_images_with_claude(uploaded_imgs, api_key)
+                        if questions:
+                            st.success(f"✅ AI 辨識到 {len(questions)} 道題目")
+                            with st.expander("預覽辨識結果"):
+                                for q in questions[:3]:
+                                    st.write(f"**Q{q['id']}** {q['text']}")
+                                    for opt in q['options']:
+                                        st.write(f"　{opt}")
+                                    st.divider()
+
+                            if st.session_state.db.add_category(img_category, img_subject):
+                                categories = st.session_state.db.get_categories()
+                                cat_id = [c['id'] for c in categories if c['name'] == img_category][0]
+                                count = st.session_state.db.add_questions(cat_id, questions)
+                                st.success(f"✅ 成功匯入 {count} 道題目到【{img_category}】")
+                            else:
+                                st.warning("⚠️ 分類名稱已存在")
+                        else:
+                            st.error("❌ 未辨識到任何題目")
+                    except json.JSONDecodeError as e:
+                        st.error(f"❌ AI 回傳格式錯誤：{e}")
+                    except Exception as e:
+                        st.error(f"❌ 發生錯誤：{e}")
+        elif uploaded_imgs and img_category and not api_key:
+            st.warning("⚠️ 請輸入 Anthropic API Key")
+
+    # Tab 1: 上傳 PDF
+    with tabs[1]:
         st.subheader("📤 上傳 PDF 並建立分類")
         
         col1, col2 = st.columns(2)
@@ -386,7 +513,7 @@ def page_quiz_manage():
                         st.warning("請檢查 PDF 格式是否標準，或在上方「查看提取的文本」中查看內容")
     
     # Tab 2: 查看分類
-    with tabs[1]:
+    with tabs[2]:
         st.subheader("📋 已有分類")
         
         categories = st.session_state.db.get_categories()
@@ -410,7 +537,7 @@ def page_quiz_manage():
             st.info("還沒有分類")
     
     # Tab 3: 統計
-    with tabs[2]:
+    with tabs[3]:
         stats = st.session_state.db.get_statistics()
         
         col1, col2, col3 = st.columns(3)
