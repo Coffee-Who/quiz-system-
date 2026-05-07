@@ -55,8 +55,8 @@ if 'exam_state' not in st.session_state:
 class PDFQuizParser:
     """PDF 考卷解析"""
 
-    # 支援半角 (A) 和全角 （A） 括號
-    OPTION_RE = re.compile(r'[（(]([A-D])[）)]')
+    # 支援半角 (A)、全角 （A）、全角字母 （Ａ） 三種格式
+    OPTION_RE = re.compile(r'[（(]([A-DＡ-Ｄ])[）)]')
 
     # 題號格式（多種）
     Q_NUM_PATTERNS = [
@@ -217,8 +217,10 @@ class PDFQuizParser:
             text_end = positions[i + 1]['pos'] if i + 1 < len(positions) else len(block)
             content = block[p['start']:text_end].strip()
             content = re.sub(r'[。，、；：.,:;\s]+$', '', content)
+            # 全角字母正規化為半角
+            letter = p['letter'] if p['letter'] in 'ABCD' else chr(ord(p['letter']) - 0xFF21 + 0x41)
             if content:
-                options.append(f"({p['letter']}) {content}")
+                options.append(f"({letter}) {content}")
         return options
 
 
