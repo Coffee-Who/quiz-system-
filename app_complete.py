@@ -111,8 +111,8 @@ class PDFQuizParser:
                         j += 1
                         continue
                     
-                    # 尋找選項：(A) (B) 等（全角或半角括號都支援）
-                    if re.search(r'[（(][A-D][）)]', next_line_stripped):
+                    # 尋找選項：(A) (B) 等（半角括號）
+                    if re.search(r'\([A-D]\)', next_line_stripped):
                         opts = PDFQuizParser._extract_all_options(next_line_stripped)
                         options.extend(opts)
                     else:
@@ -157,12 +157,12 @@ class PDFQuizParser:
     
     @staticmethod
     def _extract_all_options(block: str) -> List[str]:
-        """從選項區塊提取所有 A B C D 選項"""
+        """從選項區塊提取所有 A B C D 選項 - 半角括號"""
         options = []
         
-        # 找所有選項的位置
+        # 找所有選項的位置（只有半角）
         positions = []
-        for match in re.finditer(r'[（(]([A-D])[）)]', block):
+        for match in re.finditer(r'\(([A-D])\)', block):
             positions.append({
                 'letter': match.group(1),
                 'start': match.end(),
