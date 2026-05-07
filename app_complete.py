@@ -70,88 +70,79 @@ class PDFQuizParser:
     
     @staticmethod
     def parse_questions(text: str) -> List[Dict]:
-        """用 Claude API 解析 PDF 文本中的題目"""
+        """解析題目 - 純正則表達式方法（不需要 API）"""
         
-        try:
-            import anthropic
-            import os
-            import streamlit as st
-            
-            # 嘗試從 Streamlit secrets 或環境變數讀取 API Key
-            api_key = None
-            
-            # 方式 1：Streamlit secrets
-            if hasattr(st, 'secrets') and 'ANTHROPIC_API_KEY' in st.secrets:
-                api_key = st.secrets['ANTHROPIC_API_KEY']
-            
-            # 方式 2：環境變數
-            if not api_key:
-                api_key = os.environ.get('ANTHROPIC_API_KEY')
-            
-            # 方式 3：直接使用（會自動找 ANTHROPIC_API_KEY 環境變數）
-            if not api_key:
-                client = anthropic.Anthropic()
-            else:
-                client = anthropic.Anthropic(api_key=api_key)
-            
-            prompt = f"""請從以下 PDF 提取的文本中，識別所有的選擇題題目。
-
-每個題目包含：
-- 題號
-- 題文
-- 4 個選項（A、B、C、D）
-
-請返回 JSON 格式：
-[
-  {{"id": 1, "text": "題文...", "options": ["(A) 選項A", "(B) 選項B", "(C) 選項C", "(D) 選項D"]}},
-  ...
-]
-
-PDF 文本：
-{text[:3000]}
-
-只返回 JSON 陣列，不要其他內容。"""
-            
-            message = client.messages.create(
-                model="claude-opus-4-20250805",
-                max_tokens=4000,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ]
-            )
-            
-            response_text = message.content[0].text
-            
-            # 解析 JSON
-            import json
-            import re
-            
-            # 試著找出 JSON 陣列
-            json_match = re.search(r'\[\s*\{.*\}\s*\]', response_text, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(0)
-                data = json.loads(json_str)
-                
-                questions = []
-                for item in data:
-                    questions.append({
-                        "id": item.get("id", len(questions) + 1),
-                        "type": "single",
-                        "text": item.get("text", ""),
-                        "options": item.get("options", []),
-                        "correct": -1,
-                        "analysis": f"第 {item.get('id', len(questions) + 1)} 題"
-                    })
-                
-                return questions
-            
-        except Exception as e:
-            # 如果 API 呼叫失敗，回退到原始方法
-            import streamlit as st
-            st.warning(f"⚠️ AI 解析失敗：{str(e)}，使用備用方法...")
+        questions = []
         
-        # 回退到正則表達式方法
-        return PDFQuizParser._parse_questions_regex(text)
+        # 方法：直接找 (A) (B) (C) (D) 的選項行，然後向上找題號
+        # 分成多行，每行可能是題文或選項
+        
+        lines = text.split('\n')
+        
+        # 第一步：找出所有包含選項的行
+        option_lines = []
+        for i, line in enumerate(lines):
+            if re.search(r'\([A-D]\)', line):
+                option_lines.append(i)
+        
+        # 第二步：從選項向上找題號
+        questions_found = {}
+        
+        for opt_line_idx in option_lines:
+            # 向上搜尋題號（最多搜尋 10 行）
+            q_num = None
+            q_text = ""
+            
+            for j in range(opt_line_idx, max(opt_line_idx - 10, -1), -1):
+                line = lines[j]
+                match = re.search(r'[（(]\s*[）)]\s*(\d+)\.', line)
+                if match:
+                    q_num = int(match.group(1))
+                    # 題文是題號後面的內容
+                    q_match = re.search(r'[（(]\s*[）)]\s*\d+\.\s+(.+)', line)
+                    if q_match:
+                        q_text = q_match.group(1)
+                    break
+            
+            if q_num:
+                if q_num not in questions_found:
+                    questions_found[q_num] = {"text": q_text, "options": [], "lines": set()}
+                
+                questions_found[q_num]["lines"].add(opt_line_idx)
+        
+        # 第三步：收集每個題的選項
+        for q_num in sorted(questions_found.keys()):
+            q_info = questions_found[q_num]
+            q_text = q_info["text"]
+            all_options = []
+            
+            # 收集該題的所有選項行
+            for opt_line_idx in sorted(q_info["lines"]):
+                opt_line = lines[opt_line_idx]
+                opts = PDFQuizParser._extract_all_options(opt_line)
+                all_options.extend(opts)
+            
+            # 如果有選項，創建題目
+            if len(all_options) >= 2:
+                # 題文也可能在選項前面的幾行
+                if not q_text:
+                    for j in range(min(q_info["lines"]) - 1, max(min(q_info["lines"]) - 5, -1), -1):
+                        if j >= 0:
+                            line = lines[j].strip()
+                            if line and not re.search(r'\([A-D]\)', line):
+                                q_text = line + q_text
+                
+                question = {
+                    "id": q_num,
+                    "type": "single",
+                    "text": q_text.strip(),
+                    "options": all_options[:4],
+                    "correct": -1,
+                    "analysis": f"第 {q_num} 題"
+                }
+                questions.append(question)
+        
+        return questions
     
     @staticmethod
     def _parse_questions_regex(text: str) -> List[Dict]:
