@@ -179,7 +179,9 @@ class PDFQuizParser:
             })
 
         questions.sort(key=lambda x: x['id'])
+        q_ids = [str(q['id']) for q in questions]
         debug_log.append(f"✨ 最終解析：{len(questions)} 題")
+        debug_log.append(f"📋 題號列表：{', '.join(q_ids) if q_ids else '（無）'}")
 
         # 備援：若 0 題則改用切塊法
         if len(questions) == 0:
@@ -338,11 +340,19 @@ def page_quiz_manage():
                         st.write(f"**{desc}**：找到 {n} 個")
 
                 st.divider()
-                st.subheader("📋 前 20 行原始文字（關鍵）")
+                st.subheader("📋 原始文字逐行（前 60 行）")
                 if text:
-                    preview_lines = text.split('\n')[:20]
+                    all_lines = text.split('\n')
+                    preview_lines = all_lines[:60]
                     for idx, ln in enumerate(preview_lines):
                         st.code(f"{idx+1:3d} | {ln}", language="text")
+                    if len(all_lines) > 60:
+                        st.caption(f"（共 {len(all_lines)} 行，只顯示前 60 行）")
+
+                st.divider()
+                st.subheader("🔍 解析日誌")
+                if 'pdf_parse_debug' in st.session_state:
+                    st.text(st.session_state.pdf_parse_debug)
         
         if uploaded_file and category_name:
             if st.button("🔍 解析並匯入", use_container_width=True):
