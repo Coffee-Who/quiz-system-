@@ -70,89 +70,69 @@ class PDFQuizParser:
     
     @staticmethod
     def parse_questions(text: str) -> List[Dict]:
-        """解析題目 - 正確的題號格式：（ ） 1."""
+        """解析題目 - 使用文本塊法避免行分割問題"""
         
         questions = []
         
-        # 正確的題號模式：( ) 或 （ ） + 數字 + .
+        # 找所有題號位置
         pattern = r'[（(]\s*[）)]\s*(\d+)\.\s+'
+        matches = list(re.finditer(pattern, text))
         
-        lines = text.split('\n')
-        i = 0
+        if not matches:
+            return []
         
-        # 調試：記錄找到的題號
-        found_questions_debug = []
-        
-        while i < len(lines):
-            line = lines[i]
-            match = re.search(pattern, line)
+        # 從每個題號到下一個題號，提取完整文本塊
+        for idx, match in enumerate(matches):
+            q_num = int(match.group(1))
+            block_start = match.end()
             
-            if match:
-                q_num = int(match.group(1))
-                q_start = match.end()
-                q_text = line[q_start:].strip()
-                
-                found_questions_debug.append(f"題{q_num}")
-                
-                # 蒐集後續行直到下一個題號
-                options = []
-                j = i + 1
-                
-                while j < len(lines):
-                    next_line = lines[j]
-                    
-                    # 檢查是否是下一個題號
-                    if re.search(pattern, next_line):
-                        break
-                    
-                    next_line_stripped = next_line.strip()
-                    
-                    if not next_line_stripped:
-                        j += 1
-                        continue
-                    
-                    # 尋找選項：(A) (B) 等（半角括號）
-                    if re.search(r'\([A-D]\)', next_line_stripped):
-                        opts = PDFQuizParser._extract_all_options(next_line_stripped)
-                        options.extend(opts)
-                    else:
-                        # 沒有選項就加到題文
-                        if len(options) == 0:
-                            q_text += " " + next_line_stripped
-                    
-                    j += 1
-                    
-                    # 找到 4 個選項就停止
-                    if len(options) >= 4:
-                        break
-                
-                # 創建題目
-                if len(options) >= 2:
-                    question = {
-                        "id": q_num,
-                        "type": "single",
-                        "text": q_text.strip(),
-                        "options": options[:4],
-                        "correct": -1,
-                        "analysis": f"第 {q_num} 題"
-                    }
-                    questions.append(question)
-                else:
-                    # 調試：記錄未成功創建的題目
-                    found_questions_debug.append(f"  ❌ 題{q_num}：只找到 {len(options)} 個選項")
-                
-                i = j
-                continue
+            # 找下一個題號的位置（或文末）
+            if idx + 1 < len(matches):
+                block_end = matches[idx + 1].start()
+            else:
+                block_end = len(text)
             
-            i += 1
-        
-        # 將調試信息存儲在 session_state（供前端顯示）
-        import streamlit as st
-        if 'last_parse_debug' not in st.session_state:
-            st.session_state.last_parse_debug = []
-        st.session_state.last_parse_debug = found_questions_debug
+            # 提取該題的完整文本塊
+            q_block = text[block_start:block_end]
+            
+            # 分離題文和選項
+            q_text, options = PDFQuizParser._split_q_and_opts(q_block)
+            
+            # 創建題目
+            if len(options) >= 2:
+                question = {
+                    "id": q_num,
+                    "type": "single",
+                    "text": q_text.strip(),
+                    "options": options[:4],
+                    "correct": -1,
+                    "analysis": f"第 {q_num} 題"
+                }
+                questions.append(question)
         
         return questions
+    
+    @staticmethod
+    def _split_q_and_opts(block: str) -> tuple:
+        """將題目文本塊分割為題文和選項"""
+        
+        # 找第一個選項的位置
+        first_opt_match = re.search(r'\([A-D]\)', block)
+        
+        if not first_opt_match:
+            # 沒有選項
+            return block, []
+        
+        # 題文 = 第一個選項之前的部分
+        q_text = block[:first_opt_match.start()].strip()
+        
+        # 選項區塊 = 第一個選項開始到末尾
+        opts_block = block[first_opt_match.start():]
+        
+        # 提取所有選項
+        options = PDFQuizParser._extract_all_options(opts_block)
+        
+        return q_text, options
 
     
     @staticmethod
