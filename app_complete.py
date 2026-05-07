@@ -70,20 +70,19 @@ class PDFQuizParser:
     
     @staticmethod
     def parse_questions(text: str) -> List[Dict]:
-        """解析題目 - 題號是 （ ） 1. 格式"""
+        """解析題目 - 題號是 1. 2. 3. （ ） 只是選項前的符號"""
         
         questions = []
         
-        # 找所有題號位置：（ ） + 數字 + .
-        # 可能有各種空格和括號變化
-        pattern = r'[（(]\s*[）)]\s*(\d+)\.\s*'
+        # 找所有題號位置：行首的數字 + .
+        pattern = r'^\s*(\d+)\.\s+'
         
         lines = text.split('\n')
         i = 0
         
         while i < len(lines):
             line = lines[i]
-            match = re.search(pattern, line)
+            match = re.match(pattern, line)
             
             if match:
                 q_num = int(match.group(1))
@@ -97,8 +96,8 @@ class PDFQuizParser:
                 while j < len(lines):
                     next_line = lines[j]
                     
-                    # 檢查是否是下一個題號
-                    if re.search(pattern, next_line):
+                    # 檢查是否是下一個題號（行首的數字.）
+                    if re.match(pattern, next_line):
                         break
                     
                     next_line_stripped = next_line.strip()
@@ -107,7 +106,8 @@ class PDFQuizParser:
                         j += 1
                         continue
                     
-                    # 尋找選項（(A) (B) (C) (D) 或 （A）（B）（C）（D））
+                    # 尋找選項：忽略前面的 （ ）
+                    # 直接找 (A) (B) 等，無論前面是否有括號
                     if re.search(r'[（(][A-D][）)]', next_line_stripped):
                         opts = PDFQuizParser._extract_all_options(next_line_stripped)
                         options.extend(opts)
