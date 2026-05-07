@@ -70,50 +70,55 @@ class PDFQuizParser:
     
     @staticmethod
     def parse_questions(text: str) -> List[Dict]:
-        """解析題目 - 簡化版，直接找括號和選項"""
+        """解析題目 - 題號是 1. 2. 3. 數字"""
         
         questions = []
-        q_num = 0
         
-        # 分割成行
+        # 找所有題號位置（1. 2. 3. ...）
+        # 必須在行首或空格後
+        pattern = r'^\s*(\d+)\.\s+'
+        
         lines = text.split('\n')
         i = 0
         
         while i < len(lines):
-            line = lines[i].strip()
+            line = lines[i]
+            match = re.match(pattern, line)
             
-            # 檢查是否是題號行（包含 （ ） 或 ( )）
-            if re.search(r'[（(]\s*[）)]', line):
-                q_num += 1
+            if match:
+                q_num = int(match.group(1))
+                q_start = match.end()
+                q_text = line[q_start:].strip()
                 
-                # 提取題文（移除括號）
-                q_text = re.sub(r'^[（(]\s*[）)]\s*\d*\.?\s*', '', line)
-                
-                # 蒐集後續行的選項
+                # 蒐集後續行直到下一個題號
                 options = []
                 j = i + 1
                 
-                # 向下搜尋選項（最多搜尋 10 行或到下一個題號）
-                while j < len(lines) and len(options) < 4:
-                    next_line = lines[j].strip()
+                while j < len(lines):
+                    next_line = lines[j]
                     
-                    # 遇到下一個題號就停止
-                    if re.search(r'[（(]\s*[）)]', next_line) and j > i:
+                    # 檢查是否是下一個題號
+                    if re.match(r'^\s*\d+\.\s+', next_line):
                         break
                     
-                    # 尋找選項
+                    next_line = next_line.strip()
+                    
+                    if not next_line:
+                        j += 1
+                        continue
+                    
+                    # 尋找選項（(A) (B) (C) (D) 或 （A）（B）（C）（D））
                     if re.search(r'[（(][A-D][）)]', next_line):
-                        # 提取所有選項
                         opts = PDFQuizParser._extract_all_options(next_line)
                         options.extend(opts)
                     else:
                         # 沒有選項就加到題文
-                        if q_text and not options:
+                        if len(options) == 0:
                             q_text += " " + next_line
                     
                     j += 1
                     
-                    # 如果已經找夠選項就停止
+                    # 找到 4 個選項就停止
                     if len(options) >= 4:
                         break
                 
@@ -128,10 +133,9 @@ class PDFQuizParser:
                         "analysis": f"第 {q_num} 題"
                     }
                     questions.append(question)
-                    
-                    # 跳過已處理的行
-                    i = j
-                    continue
+                
+                i = j
+                continue
             
             i += 1
         
