@@ -70,69 +70,73 @@ class PDFQuizParser:
     
     @staticmethod
     def parse_questions(text: str) -> List[Dict]:
-        """解析題目 - 題號只有括號，沒有數字"""
-        
-        # 匹配：（ ） 或 ( ) 開頭（題號沒有數字！）
-        question_pattern = r'[（(]\s*[）)]\s+'
-        
-        matches = list(re.finditer(question_pattern, text))
-        
-        if not matches:
-            return []
+        """解析題目 - 簡化版，直接找括號和選項"""
         
         questions = []
+        q_num = 0
         
-        # 從每個題號開始，到下一個題號結束
-        for idx, match in enumerate(matches):
-            q_start = match.end()  # 括號後的位置
+        # 分割成行
+        lines = text.split('\n')
+        i = 0
+        
+        while i < len(lines):
+            line = lines[i].strip()
             
-            # 找下一個題號的位置（或文末）
-            if idx + 1 < len(matches):
-                q_end = matches[idx + 1].start()
-            else:
-                q_end = len(text)
+            # 檢查是否是題號行（包含 （ ） 或 ( )）
+            if re.search(r'[（(]\s*[）)]', line):
+                q_num += 1
+                
+                # 提取題文（移除括號）
+                q_text = re.sub(r'^[（(]\s*[）)]\s*\d*\.?\s*', '', line)
+                
+                # 蒐集後續行的選項
+                options = []
+                j = i + 1
+                
+                # 向下搜尋選項（最多搜尋 10 行或到下一個題號）
+                while j < len(lines) and len(options) < 4:
+                    next_line = lines[j].strip()
+                    
+                    # 遇到下一個題號就停止
+                    if re.search(r'[（(]\s*[）)]', next_line) and j > i:
+                        break
+                    
+                    # 尋找選項
+                    if re.search(r'[（(][A-D][）)]', next_line):
+                        # 提取所有選項
+                        opts = PDFQuizParser._extract_all_options(next_line)
+                        options.extend(opts)
+                    else:
+                        # 沒有選項就加到題文
+                        if q_text and not options:
+                            q_text += " " + next_line
+                    
+                    j += 1
+                    
+                    # 如果已經找夠選項就停止
+                    if len(options) >= 4:
+                        break
+                
+                # 創建題目
+                if len(options) >= 2:
+                    question = {
+                        "id": q_num,
+                        "type": "single",
+                        "text": q_text.strip(),
+                        "options": options[:4],
+                        "correct": -1,
+                        "analysis": f"第 {q_num} 題"
+                    }
+                    questions.append(question)
+                    
+                    # 跳過已處理的行
+                    i = j
+                    continue
             
-            # 提取該題的完整文本
-            q_block = text[q_start:q_end].strip()
-            
-            # 分離題文和選項
-            q_text, options = PDFQuizParser._split_question_and_options(q_block)
-            
-            # 創建題目
-            if len(options) >= 2:
-                q_num = idx + 1  # 題號由順序決定
-                question = {
-                    "id": q_num,
-                    "type": "single",
-                    "text": q_text.strip(),
-                    "options": options[:4],
-                    "correct": -1,
-                    "analysis": f"第 {q_num} 題"
-                }
-                questions.append(question)
+            i += 1
         
         return questions
-    
-    @staticmethod
-    def _split_question_and_options(block: str) -> tuple:
-        """從題目文本區塊中分離題文和選項"""
-        
-        # 尋找第一個選項的位置
-        option_pattern = r'[（(]([A-D])[）)]'
-        first_option = re.search(option_pattern, block)
-        
-        if first_option:
-            # 題文是第一個選項之前的部分
-            q_text = block[:first_option.start()]
-            options_block = block[first_option.start():]
-        else:
-            # 沒有找到選項，整個都是題文
-            return block, []
-        
-        # 從選項區塊中提取所有選項
-        options = PDFQuizParser._extract_all_options(options_block)
-        
-        return q_text, options
+
     
     @staticmethod
     def _extract_all_options(block: str) -> List[str]:
