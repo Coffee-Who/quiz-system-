@@ -246,14 +246,39 @@ def page_quiz_manage():
             # 調試：顯示原始文本
             with st.expander("📄 查看提取的文本（調試用）"):
                 text = PDFQuizParser.extract_text(uploaded_file)
+                
+                st.subheader("完整原始文本（前 3000 字）")
                 st.text_area(
                     "原始文本內容",
-                    text[:2000] if text else "（無法提取）",
-                    height=300,
+                    text[:3000] if text else "（無法提取）",
+                    height=400,
                     disabled=True,
-                    key="debug_text"
+                    key="debug_text_main"
                 )
-                st.info("👆 請截圖上方的文本，並告訴我題號格式是什麼樣")
+                
+                st.divider()
+                st.subheader("🔍 題號偵測結果")
+                
+                question_patterns = [
+                    (r'[（(]\s*[）)]\s+', "括號題號（無數字）"),
+                    (r'[（(]\s*[）)]\s*\d+\.', "括號題號（有數字）"),
+                    (r'^\d+\.', "純數字題號"),
+                ]
+                
+                for pattern, desc in question_patterns:
+                    matches = list(re.finditer(pattern, text)) if text else []
+                    st.write(f"**{desc}**: 找到 {len(matches)} 個")
+                
+                st.divider()
+                st.subheader("顯示前 10 個括號位置（調試用）")
+                matches = list(re.finditer(r'[（(]\s*[）)]', text)) if text else []
+                
+                if matches:
+                    for i, m in enumerate(matches[:10]):
+                        start = max(0, m.start() - 30)
+                        end = min(len(text), m.end() + 80)
+                        preview = text[start:end]
+                        st.code(f"位置 {i+1}: ...{preview}...", language="text")
         
         if uploaded_file and category_name:
             if st.button("🔍 解析並匯入", use_container_width=True):
