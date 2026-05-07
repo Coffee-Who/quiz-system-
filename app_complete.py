@@ -85,33 +85,42 @@ class PDFQuizParser:
         lines = text.split('\n')
         debug_log = [
             f"📄 總字符：{len(text)}　📋 總行數：{len(lines)}",
-            f"🔍 半角選項 (A)：{len(re.findall(chr(40)+'[A-D]'+chr(41), text))} 個　"
-            f"全角選項 （A）：{len(re.findall('（[A-D]）', text))} 個",
         ]
 
-        # 找出每行含有哪些選項字母
         def get_letters(line):
-            return [m.group(1) for m in PDFQuizParser.OPTION_RE.finditer(line)]
+            """取得該行所有選項字母（半角或全角皆可）"""
+            raw = [m.group(1) for m in PDFQuizParser.OPTION_RE.finditer(line)]
+            # 正規化為半角
+            return [c if c in 'ABCD' else chr(ord(c) - 0xFF21 + 0x41) for c in raw]
 
-        # 合併相鄰選項行（有些 PDF 把 ABCD 拆成兩行）
-        opt_groups = []   # [(opt_text, last_line_idx)]
+        def is_new_group_start(letters):
+            """這行是否為新選項組的起始（含 A）"""
+            return 'A' in letters
+
+        # 合併相鄰選項行，允許跨 3 行（A B / C D 或 A / B / C D 等格式）
+        opt_groups = []
         i = 0
         while i < len(lines):
             letters = get_letters(lines[i])
             if letters:
-                opt_text = lines[i]
-                last_i = i
-                # 如果下一行也有選項且不包含 A（避免把下一題的選項合進來）
-                if i + 1 < len(lines):
-                    next_letters = get_letters(lines[i + 1])
-                    if next_letters and 'A' not in next_letters:
-                        opt_text += ' ' + lines[i + 1]
-                        last_i = i + 1
-                        i += 1
-                opt_groups.append((opt_text, last_i))
-            i += 1
+                opt_lines = [lines[i]]
+                first_i = i
+                j = i + 1
+                # 最多再往下合併 3 行
+                while j < len(lines) and j <= i + 3:
+                    nxt = get_letters(lines[j])
+                    if nxt and not is_new_group_start(nxt):
+                        opt_lines.append(lines[j])
+                        j += 1
+                    else:
+                        break
+                opt_text = ' '.join(opt_lines)
+                opt_groups.append((opt_text, first_i))
+                i = j
+            else:
+                i += 1
 
-        debug_log.append(f"📌 找到 {len(opt_groups)} 個選項群組")
+        debug_log.append(f"📌 選項群組：{len(opt_groups)} 個")
 
         questions = []
         seen_q_nums = set()
@@ -121,11 +130,11 @@ class PDFQuizParser:
             if len(options) < 2:
                 continue
 
-            # 往上找題號（最多搜尋 10 行）
+            # 往上最多搜尋 20 行找題號
             q_num = None
             q_text_parts = []
 
-            for j in range(opt_line_idx - 1, max(opt_line_idx - 10, -1), -1):
+            for j in range(opt_line_idx - 1, max(opt_line_idx - 20, -1), -1):
                 line = lines[j].strip()
                 if not line:
                     continue
@@ -133,7 +142,6 @@ class PDFQuizParser:
                 if PDFQuizParser.OPTION_RE.search(line):
                     break
 
-                # 嘗試從這行找題號
                 found = False
                 for pat in PDFQuizParser.Q_NUM_PATTERNS:
                     m = pat.search(line)
@@ -167,7 +175,7 @@ class PDFQuizParser:
         questions.sort(key=lambda x: x['id'])
         debug_log.append(f"✨ 最終解析：{len(questions)} 題")
 
-        # 若上面方法失敗，用舊的文字區塊法備援
+        # 備援：若 0 題則改用切塊法
         if len(questions) == 0:
             for pat in PDFQuizParser.Q_NUM_PATTERNS:
                 qs = PDFQuizParser._parse_with_pattern(text, lines, pat)
