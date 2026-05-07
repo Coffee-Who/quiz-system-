@@ -156,33 +156,47 @@ class PDFQuizParser:
             if len(options) < 2:
                 continue
 
-            # 往上最多搜尋 20 行找題號
             q_num = None
             q_text_parts = []
 
-            for j in range(opt_line_idx - 1, max(opt_line_idx - 20, -1), -1):
-                line = lines[j].strip()
-                if not line:
-                    continue
-                # 遇到其他選項行就停止
-                if PDFQuizParser.OPTION_RE.search(line):
-                    break
-
-                found = False
+            # 先檢查選項所在行的「選項之前」有沒有題號（題號與選項同行）
+            first_opt_m = PDFQuizParser.OPTION_RE.search(opt_text)
+            if first_opt_m:
+                before_opt = opt_text[:first_opt_m.start()]
                 for pat in PDFQuizParser.Q_NUM_PATTERNS:
-                    m = pat.search(line)
+                    m = pat.search(before_opt)
                     if m:
                         q_num = int(m.group(1))
-                        after = line[m.end():].strip()
+                        after = before_opt[m.end():].strip()
                         if after:
-                            q_text_parts.insert(0, after)
-                        found = True
+                            q_text_parts.append(after)
                         break
 
-                if found:
-                    break
-                else:
-                    q_text_parts.insert(0, line)
+            # 再往上最多搜尋 20 行找題號
+            if q_num is None:
+                for j in range(opt_line_idx - 1, max(opt_line_idx - 20, -1), -1):
+                    line = lines[j].strip()
+                    if not line:
+                        continue
+                    # 遇到其他選項行就停止
+                    if PDFQuizParser.OPTION_RE.search(line):
+                        break
+
+                    found = False
+                    for pat in PDFQuizParser.Q_NUM_PATTERNS:
+                        m = pat.search(line)
+                        if m:
+                            q_num = int(m.group(1))
+                            after = line[m.end():].strip()
+                            if after:
+                                q_text_parts.insert(0, after)
+                            found = True
+                            break
+
+                    if found:
+                        break
+                    else:
+                        q_text_parts.insert(0, line)
 
             if q_num is None:
                 continue
